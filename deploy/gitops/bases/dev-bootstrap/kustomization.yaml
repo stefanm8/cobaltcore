@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+- ../../../openbao/bootstrap
+- ../../../openbao/policies
+- rbac.yaml
+- job.yaml
+- unseal.yaml
+namespace: shared-services
+configMapGenerator:
+- name: cobaltcore-bootstrap-runner
+  files:
+  - bootstrap.sh

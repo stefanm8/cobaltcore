@@ -1,0 +1,46 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cobaltcore-openbao-bootstrap
+  namespace: shared-services
+  annotations:
+    kustomize.toolkit.fluxcd.io/force: enabled
+spec:
+  backoffLimit: 4
+  activeDeadlineSeconds: 1800
+  template:
+    spec:
+      serviceAccountName: cobaltcore-bootstrap
+      restartPolicy: OnFailure
+      containers:
+      - name: bootstrap
+        image: alpine/k8s:1.34.12@sha256:d50424976a0a888d2531f13035dce45c004ec2b6f877f233005ba35c0d61be5d
+        command:
+        - bash
+        - /runner/bootstrap.sh
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            memory: 256Mi
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+          readOnly: true
+        - name: policies
+          mountPath: /policies
+          readOnly: true
+        - name: runner
+          mountPath: /runner
+          readOnly: true
+      volumes:
+      - name: scripts
+        configMap:
+          name: cobaltcore-openbao-scripts
+      - name: policies
+        configMap:
+          name: cobaltcore-openbao-policies
+      - name: runner
+        configMap:
+          name: cobaltcore-bootstrap-runner

@@ -1,0 +1,59 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: cobaltcore-bootstrap
+  namespace: shared-services
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: cobaltcore-bootstrap
+  namespace: shared-services
+rules:
+- apiGroups:
+  - ''
+  resources:
+  - pods
+  resourceNames:
+  - openbao-0
+  verbs:
+  - get
+- apiGroups:
+  - ''
+  resources:
+  - pods/exec
+  resourceNames:
+  - openbao-0
+  verbs:
+  - create
+- apiGroups:
+  - ''
+  resources:
+  - secrets
+  resourceNames:
+  - openbao-init-keys
+  verbs:
+  - get
+  - delete
+  - patch
+  - update
+- apiGroups:
+  - ''
+  resources:
+  - secrets
+  verbs:
+  - create
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: cobaltcore-bootstrap
+  namespace: shared-services
+subjects:
+- kind: ServiceAccount
+  name: cobaltcore-bootstrap
+  namespace: shared-services
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: cobaltcore-bootstrap

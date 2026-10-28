@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The Minimal profile keeps its database in the openstack namespace.
 set -euo pipefail
-for attempt in $(seq 1 120); do
+for _ in $(seq 1 120); do
   if kubectl -n openstack get mariadb/openstack-db >/dev/null 2>&1; then break; fi
   sleep 5
 done

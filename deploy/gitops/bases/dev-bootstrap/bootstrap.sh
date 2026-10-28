@@ -3,7 +3,7 @@
 set -euo pipefail
 export OPENBAO_NAMESPACE=shared-services OPENBAO_PODS=openbao-0
 export POLICIES_DIR=/policies KORC_CONTROLPLANES=openstack/controlplane
-for attempt in $(seq 1 120); do
+for _ in $(seq 1 120); do
   if kubectl -n shared-services exec openbao-0 -- bao status -format=json 2>/dev/null | jq -e 'has("initialized")' >/dev/null; then
     break
   fi

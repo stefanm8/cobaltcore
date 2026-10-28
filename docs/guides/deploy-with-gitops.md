@@ -1,6 +1,6 @@
 ---
 title: Deploy with GitOps
-description: Compose CobaltCore Kustomize bases in a deployment repository and reconcile them with Flux or an Argo CD entry point.
+description: Compose CobaltCore Kustomize bases in a deployment repository and reconcile them with Flux.
 ---
 
 # Deploy with GitOps
@@ -16,7 +16,6 @@ cobaltcore-deployment/
   overlays/minikube/operators/kustomization.yaml
   clusters/minikube/kustomization.yaml
   bootstrap/flux/
-  bootstrap/argocd/
 ```
 
 For example, the operators base can reference the fork directly:
@@ -70,15 +69,6 @@ These Jobs are explicitly for the local `openstack/controlplane` identity and
 Kubernetes Secret. For production, replace them with the platform's secret
 custody, unseal and tenant-onboarding process. Keep pruning disabled on stateful
 stages and plan teardown separately.
-
-## Argo CD entry point
-
-Argo CD can reconcile the same stage declarations through an Application while
-Flux executes the HelmRelease and Kustomization resources. Install the Flux
-runtime first, then let Argo own the cluster directory and the GitRepository.
-Do not install a Flux root over that same directory. Native Argo Helm
-applications would require a separate translation of release dependencies and
-bootstrap health gates; the supplied bundles retain Flux's Helm engine.
 
 For the exact base contract and validation command, read `deploy/gitops/README.md`.
 For controller behavior, see the [Flux Kustomization documentation](https://fluxcd.io/flux/components/kustomize/kustomizations/).

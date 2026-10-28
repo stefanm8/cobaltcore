@@ -68,18 +68,12 @@ Namespaces in `operators` are excluded from Flux pruning. Pin exact chart
 versions and operator image digests in the environment overlay before promoting
 it; the reusable upstream bases intentionally retain their existing ranges.
 
-## Flux and Argo CD ownership
+## Flux reconciliation
 
 Bootstrap Flux once, then a GitRepository and root Kustomization targeting the
 deployment repository's cluster directory. Subsequent configuration changes are
 Git commits; no workstation-side unseal, live suspend patch, or Helm install is
 part of the stack reconciliation.
-
-Argo CD can own the same cluster directory through an Application. It still
-needs the Flux runtime, because the bundles contain HelmRelease and Flux
-Kustomization resources. Argo owns the stage declarations; Flux owns the resources
-those stages produce. Do not also install the Flux root Kustomization over the
-same directory. This is an Argo entry point, not a native Argo Helm translation.
 
 Validate with `python3 hack/check-gitops-bundles.py` (requires `kustomize` and
 Mike Farah's `yq`). See [Flux dependencies and health checks](https://fluxcd.io/flux/components/kustomize/kustomizations/).

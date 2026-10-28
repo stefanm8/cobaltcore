@@ -11,5 +11,5 @@ patches:
     \ c5c3-operator\n  namespace: c5c3-system\n$patch: delete\n"
 - target:
     kind: Namespace
-  patch: "- op: add\n  path: /metadata/annotations\n  value:\n    kustomize.toolkit.fluxcd.io/prune:\
-    \ disabled\n"
+  patch: "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: patch-target\n  annotations:\n\
+    \    kustomize.toolkit.fluxcd.io/prune: disabled\n"

@@ -52,7 +52,10 @@ def main():
         for obj in rendered[name]:
             obj = copy.deepcopy(obj)
             if obj["kind"] == "Namespace":
-                obj["metadata"].pop("annotations", None)
+                annotations = obj["metadata"].get("annotations", {})
+                annotations.pop("kustomize.toolkit.fluxcd.io/prune", None)
+                if not annotations:
+                    obj["metadata"].pop("annotations", None)
             combined[identity(obj)] = obj
     assert original == combined, "The split changed the existing operator bundle"
     # Existing devstack overlays still build after the manifest moves.

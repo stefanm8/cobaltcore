@@ -1,20 +1,21 @@
 ---
 title: Deploy with GitOps
-description: Compose CobaltCore Kustomize bases in a deployment repository and reconcile them with Flux.
+description: Compose reusable CobaltCore Kustomize bases with environment configuration and reconcile them with Flux.
 ---
 
 # Deploy with GitOps
 
-The reusable bundles under `deploy/gitops/bases` separate installation from
-environment configuration. A deployment repository should reference a reviewed
-CobaltCore commit under `bases/`, apply cluster settings under `overlays/`, and
-declare the reconciliation order under `clusters/`.
+The bundles under `deploy/gitops/bases` expose operator releases and shared
+infrastructure independently of a target cluster. A deployment repository pins
+a reviewed CobaltCore commit under `bases/`, owns environment settings under
+`overlays/`, and declares reconciliation order under `clusters/`.
 
 ```text
 cobaltcore-deployment/
   bases/operators/kustomization.yaml
-  overlays/minikube/operators/kustomization.yaml
-  clusters/minikube/kustomization.yaml
+  overlays/production/operators/kustomization.yaml
+  overlays/production/controlplane/
+  clusters/production/kustomization.yaml
   bootstrap/flux/
 ```
 
@@ -27,48 +28,49 @@ resources:
   - https://github.com/YOUR-ORG/cobaltcore//deploy/gitops/bases/operators?ref=FULL_COMMIT_SHA
 ```
 
-An environment overlay references that base and patches chart versions, operator
-image digests, replicas and resource requests. The existing operator Helm charts
-remain the source of their CRDs, RBAC, webhooks and Deployments.
+The environment overlay selects chart versions, operator image digests, replicas
+and resource requests. The existing Helm charts remain the source of their CRDs,
+RBAC, webhooks and Deployments.
+
+## Environment responsibilities
+
+Create ControlPlane instances in the deployment repository. Select their sizing,
+service configuration, public endpoints, gateway references and secret identities
+there. The reusable bundles do not create an instance or install a gateway.
+
+Choose the Gateway implementation and its CRDs, DNS names, certificate issuers,
+load-balancer configuration and storage policy for the target cluster. OpenBao's
+GitOps base uses the default StorageClass unless the environment overrides it.
+Configure the TLS base's issuers and the shared ClusterSecretStore's namespace
+allow-list and authentication to match the environment's trust policy.
+
+The environment also owns OpenBao initialization, key custody, unsealing and
+database tenant onboarding. Existing bootstrap scripts and policies can be
+consumed as generated ConfigMaps from `deploy/openbao/bootstrap` and
+`deploy/openbao/policies`; the fork does not schedule them as Jobs or CronJobs.
 
 ## Reconciliation order
 
-Bootstrap the Flux runtime once. Then use a GitRepository and Flux
-Kustomizations with `dependsOn` and health checks:
+Bootstrap the Flux runtime, then a GitRepository and root Kustomization for the
+environment's cluster directory. Use Flux `dependsOn` and health checks to order:
 
-1. `gateway-crds` and `operators`: establish the APIs and wait for operator
-   releases, including the K-ORC and RabbitMQ Kustomizations.
-2. `tls`, then `openbao`: create the certificates before the server mounts them.
-3. `dev-bootstrap`, then `secrets`: initialize local OpenBao, configure its
-   authentication/policies, seed missing credentials, and wait for ESO.
-4. `gateway` and `controlplane-operator`: wait for the local gateway and c5c3.
-5. `controlplane`: apply the CR without waiting for aggregate readiness.
-6. `database-onboarding`: wait for the projected MariaDB, configure the database
-   engine, then wait for the Job and ControlPlane to become Ready.
+1. `operators`: wait for operator releases, including the K-ORC and RabbitMQ
+   Kustomizations.
+2. `tls`, then `openbao`: create certificates before the server mounts them.
+3. Environment-owned OpenBao bootstrap, then `secrets`: configure authentication
+   and policies before waiting for the ClusterSecretStore.
+4. `controlplane-operator`: install after all `operators` resources are Ready.
+5. Environment-owned ControlPlane and networking resources: apply the instance
+   before waiting for aggregate ControlPlane readiness.
+6. Environment-owned database onboarding: wait for the projected database,
+   configure its credential engine, then wait for the ControlPlane to become Ready.
 
-The c5c3 stage depends on K-ORC readiness through `operators`; its Helm release
-does not have to race missing K-ORC APIs. Do not wait for ControlPlane readiness
-before database onboarding: dynamic credential provisioning can require that
-onboarding to finish first.
+An uninitialized OpenBao server cannot report Ready. If a separate bootstrap
+stage requires its pod first, set `install.disableWait` and `upgrade.disableWait`
+in the environment's OpenBao overlay and enforce readiness in that stage.
+Likewise, waiting for aggregate ControlPlane readiness before database onboarding
+can block the onboarding that its dynamic credentials require.
 
-## Minikube settings
-
-Start with the Minimal Keystone/Horizon profile, one operator replica, the
-`standard` default StorageClass and standalone OpenBao. The local gateway uses
-`keystone.127-0-0-1.nip.io` and `horizon.127-0-0-1.nip.io`; set the Keystone
-public endpoint to include port 8443 when accessing it with a port-forward.
-Keep hypervisor/VM testing and storage extensions as separate overlays.
-
-The local bootstrap Job requires the OpenBao Helm release to use
-`install.disableWait: true` and `upgrade.disableWait: true`, because a sealed
-server cannot report Ready before initialization. Readiness is enforced by the
-next-stage Job instead. The development unseal CronJob handles server restarts.
-
-These Jobs are explicitly for the local `openstack/controlplane` identity and
-`shared-services/openbao-0`. They retain init keys and the root token in a
-Kubernetes Secret. For production, replace them with the platform's secret
-custody, unseal and tenant-onboarding process. Keep pruning disabled on stateful
-stages and plan teardown separately.
-
-For the exact base contract and validation command, read `deploy/gitops/README.md`.
-For controller behavior, see the [Flux Kustomization documentation](https://fluxcd.io/flux/components/kustomize/kustomizations/).
+Choose pruning and teardown policies explicitly for stateful resources. For the
+base contract and validation command, read `deploy/gitops/README.md`. For controller
+behavior, see the [Flux Kustomization documentation](https://fluxcd.io/flux/components/kustomize/kustomizations/).

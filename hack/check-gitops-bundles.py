@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check composability and preservation of the existing operator manifests."""
+"""Check reusable bundle boundaries and preservation of canonical releases."""
 import copy
 import json
 from pathlib import Path
@@ -26,27 +26,27 @@ def main():
     owners = {}
     rendered = {}
     for path in sorted(BASES.iterdir()):
-        # Remote CRD assets have a separate online render/server-validation gate.
-        if not path.is_dir() or path.name == "gateway-crds":
+        if not path.is_dir():
             continue
         objects = render(path)
         rendered[path.name] = objects
-        configmaps = {obj["metadata"]["name"] for obj in objects if obj["kind"] == "ConfigMap"}
         for obj in objects:
             key = identity(obj)
             assert key not in owners, f"{key} is owned by {owners.get(key)} and {path.name}"
             owners[key] = path.name
-            if obj["kind"] == "Job":
-                pod = obj["spec"]["template"]["spec"]
-                for volume in pod.get("volumes", []):
-                    if "configMap" in volume:
-                        assert volume["configMap"]["name"] in configmaps, volume
-                assert obj["spec"]["activeDeadlineSeconds"] > 0
-                assert obj["metadata"]["annotations"]["kustomize.toolkit.fluxcd.io/force"] == "enabled"
-        print(f"{path.name}: {len(objects)} resources; ownership and Job references valid")
+            assert obj["kind"] not in {
+                "ControlPlane", "Gateway", "GatewayClass", "EnvoyProxy",
+                "ExternalSecret", "Job", "CronJob",
+            }, f"Environment resource in reusable base: {key}"
+        print(f"{path.name}: {len(objects)} resources; unique ownership and no environment instances")
 
-    # Splitting the original operator bundle must not alter its release specs.
+    openbao = next(obj for obj in rendered["openbao"] if obj["kind"] == "HelmRelease")
+    assert "storageClass" not in openbao["spec"]["values"]["server"]["dataStorage"], \
+        "The environment must select the StorageClass"
+
+    # Only the GitOps OpenBao base drops the legacy storage driver selection.
     original = {identity(obj): obj for obj in render(ROOT / "deploy/flux-system") if obj["kind"] != "FluxInstance"}
+    original[identity(openbao)]["spec"]["values"]["server"]["dataStorage"].pop("storageClass")
     combined = {}
     for name in ("operators", "openbao", "controlplane-operator"):
         for obj in rendered[name]:
@@ -57,11 +57,14 @@ def main():
                 if not annotations:
                     obj["metadata"].pop("annotations", None)
             combined[identity(obj)] = obj
-    assert original == combined, "The split changed the existing operator bundle"
+    assert original == combined, "Unexpected change to canonical release semantics"
     # Existing devstack overlays still build after the manifest moves.
     render(ROOT / "deploy/kind/base")
     render(ROOT / "deploy/kind/infrastructure")
-    print("Original operator semantics and existing kind overlays preserved")
+    # The optional helpers package ConfigMaps only; environments own execution.
+    for path in ("deploy/openbao/bootstrap", "deploy/openbao/policies"):
+        assert all(obj["kind"] == "ConfigMap" for obj in render(ROOT / path)), path
+    print("Canonical releases preserved except StorageClass selection; existing kind overlays build")
 
 
 if __name__ == "__main__":

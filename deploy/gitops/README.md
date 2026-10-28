@@ -1,29 +1,18 @@
 # GitOps deployment bases
 
-These Kustomize directories expose the existing Helm releases, certificates and
-ControlPlane manifests as independently reconciled stages. They do not invoke
-`make deploy-infra`. Keep cluster settings and version pins in a separate
-deployment repository with `bases/`, `overlays/` and `clusters/` directories.
+These Kustomize bases expose CobaltCore's existing operator releases and shared
+infrastructure for reconciliation with Flux. Keep environment configuration in a
+separate deployment repository with `bases/`, `overlays/` and `clusters/` directories.
 
 | Base | Prerequisite | Readiness gate |
 | --- | --- | --- |
-| `gateway-crds` | Kubernetes 1.33 or newer | CRDs established |
-| `operators` | Flux source/Helm/Kustomize controllers | Helm releases and K-ORC/RabbitMQ Kustomizations Ready |
-| `tls` | operators | Certificates and issuers Ready |
-| `openbao` | TLS certificates | Helm release installed; see bootstrap below |
-| `dev-bootstrap` | OpenBao installed | bootstrap Job Complete |
-| `secrets` | bootstrap complete | ClusterSecretStore and Horizon ExternalSecret Ready |
-| `gateway` | Gateway CRDs, operators, TLS | Envoy release and Gateway Ready |
-| `controlplane-operator` | operators, including K-ORC | c5c3 Helm release Ready |
-| `controlplane` | c5c3, secrets, gateway | apply only; database onboarding must run before waiting |
-| `database-onboarding` | ControlPlane applied | Job Complete, then ControlPlane Ready |
+| `operators` | Flux source, Helm and Kustomize controllers | Helm releases and K-ORC/RabbitMQ Kustomizations Ready |
+| `tls` | cert-manager from `operators` | Certificates and issuers Ready |
+| `openbao` | TLS certificates | OpenBao installed, initialized and unsealed |
+| `secrets` | External Secrets Operator and configured OpenBao authentication | ClusterSecretStore Ready |
+| `controlplane-operator` | `operators`, including K-ORC | c5c3 Helm release Ready |
 
-Use Flux `Kustomization.spec.dependsOn` to encode these edges and `wait: true`
-for each stage except `controlplane`. The database Job waits for the projected
-MariaDB before configuring its OpenBao database engine. Waiting for the entire
-ControlPlane before this Job can create a dependency cycle.
-
-Reference a reviewed commit, for example:
+Reference a reviewed commit in the deployment repository:
 
 ```yaml
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -33,47 +22,46 @@ resources:
 ```
 
 `operators` reuses `deploy/flux-system` and excludes FluxInstance, OpenBao and
-c5c3 so they have separate lifecycle/ordering. Existing devstack consumers still
-use the same release manifests. The production TLS files now have their own
-Kustomization under `deploy/flux-system/infrastructure/tls`.
+c5c3 so the environment can manage their lifecycle and ordering separately.
+Existing devstack consumers continue to use the same canonical release manifests.
 
-## Local minikube profile
+The environment owns ControlPlane instances, service endpoints, Gateway
+implementation and CRDs, certificates for public endpoints, StorageClasses,
+sizing, version pins, and secret initialization/unseal/tenant-onboarding jobs.
+These bases create no ControlPlane instance or Gateway and run no bootstrap jobs.
+OpenBao inherits the cluster's default StorageClass unless an overlay selects one;
+the legacy bundle's `local-path` choice is not carried into this base.
 
-The initial service profile is Keystone and Horizon on one node. Use the
-`Minimal` sizing profile, one replica per CobaltCore operator, standalone
-OpenBao on the `standard` storage class, and a local gateway forward on 8443.
-Set `spec.services.keystone.publicEndpoint` to
-`https://keystone.127-0-0-1.nip.io:8443/v3`. The projected MariaDB uses the
-cluster's default StorageClass; there is no ControlPlane `storageClass` field.
-This profile does not install hypervisors, Ceph, or prove VM provisioning.
+The bases retain the existing service namespaces and internal service names.
+When changing these, update cross-resource references and OpenBao policies
+together. The TLS base retains the existing self-signed CA setup; configure the
+issuer and trust policy required by the target environment. The `secrets` base
+contains the shared ClusterSecretStore; environment-owned ExternalSecrets must
+use identities and paths permitted by the environment's OpenBao policies.
 
-For standalone OpenBao, set the HelmRelease's `install.disableWait` and
-`upgrade.disableWait` to `true`: an uninitialized server is deliberately not
-Ready, while the next-stage Job needs its pod to exist. The bootstrap Job itself
-checks the API and exits unsuccessfully if initialization cannot complete.
+## Reconciliation
 
-`dev-bootstrap` and `database-onboarding` are local development helpers, tied to
-`shared-services/openbao-0` and `openstack/controlplane`. They reuse the canonical
-bootstrap scripts and policies through hashed ConfigMaps. Jobs have bounded
-retries and no TTL so Flux can inspect completion; a changed pod template is
-replaced through the Job's Flux force annotation. A CronJob unseals the local
-server after restarts. The init keys/root token remain in a Kubernetes Secret,
-matching the devstack's existing trust model. Do not use this custody model in
-production; supply a managed OpenBao/bootstrap process there. Bootstrap access
-is namespace-scoped, but includes pod exec and secret creation in shared-services.
+Bootstrap Flux, then create a GitRepository and root Kustomization targeting the
+deployment repository's cluster directory. Express the prerequisites above with
+`dependsOn` and health checks. Wait for all `operators` resources, including the
+K-ORC Kustomization, before installing `controlplane-operator`.
 
-Keep `prune: false` on stateful stages (`openbao`, `dev-bootstrap`,
-`controlplane`, `database-onboarding`) and explicitly plan any teardown.
-Namespaces in `operators` are excluded from Flux pruning. Pin exact chart
-versions and operator image digests in the environment overlay before promoting
-it; the reusable upstream bases intentionally retain their existing ranges.
+OpenBao initialization and unsealing must complete before dependent secret stores
+can become Ready. If an environment's bootstrap stage needs a running but sealed
+OpenBao pod, its OpenBao overlay can set `install.disableWait` and
+`upgrade.disableWait` to `true`; the bootstrap stage must then enforce readiness.
+Reusable bootstrap scripts and policies are available as generated ConfigMaps
+through `deploy/openbao/bootstrap` and `deploy/openbao/policies`. These directories
+package the existing helpers; they do not execute them or choose a key-custody model.
 
-## Flux reconciliation
+When an environment provisions managed databases through a ControlPlane, apply
+the instance before running tenant onboarding. Wait for aggregate ControlPlane
+readiness after onboarding, to avoid a dependency cycle. Keep pruning disabled
+for stateful resources unless the environment has an explicit teardown policy.
+Namespaces in `operators` are excluded from Flux pruning.
 
-Bootstrap Flux once, then a GitRepository and root Kustomization targeting the
-deployment repository's cluster directory. Subsequent configuration changes are
-Git commits; no workstation-side unseal, live suspend patch, or Helm install is
-part of the stack reconciliation.
+Pin chart versions and operator image digests in the environment overlay before
+promoting changes. The reusable bases retain the canonical chart version ranges.
 
 Validate with `python3 hack/check-gitops-bundles.py` (requires `kustomize` and
 Mike Farah's `yq`). See [Flux dependencies and health checks](https://fluxcd.io/flux/components/kustomize/kustomizations/).
